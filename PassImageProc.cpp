@@ -55,31 +55,9 @@ std::vector<cv::Point> findSharpCorners(const std::vector<cv::Point> bigestConto
 	return sharpContour;
 }
 
-PassImageProc::PassImageProc()
+cv::Mat preProcess(cv::Mat srcImg)
 {
-
-}
-
-PassImageProc::PassImageProc(cv::Mat srcImg)
-	:mSrcImg(srcImg)
-{
-}
-
-
-PassImageProc::~PassImageProc()
-{
-}
-
-Mat PassImageProc::getROIImage()
-{
-	Mat roi = mSrcImg(Rect(4, mSrcImg.rows - 120, mSrcImg.cols - 8, 120));
-	return roi;
-}
-
-cv::Mat PassImageProc::findCardRegion(Mat srcImg, float scale)
-{
-	Mat imgTrans0 = Mat::zeros(srcImg.rows, srcImg.cols, srcImg.type());;
-
+	float scale = 0.5;
 	Mat srcImgCopy;
 	srcImg.copyTo(srcImgCopy);
 
@@ -106,24 +84,189 @@ cv::Mat PassImageProc::findCardRegion(Mat srcImg, float scale)
 	//3.二值化
 	Mat imgBinary;
 	threshold(imgMedianBlur, imgBinary, 120, 255, THRESH_OTSU);
-	cv::imshow("imgBinary", imgBinary);
+	//cv::imshow("imgBinary", imgBinary);
 
 	//4.边缘提取
 	Mat imgEdge;
 	Canny(imgBinary, imgEdge, 5, 120);
-	cv::imshow("imgDege", imgEdge);
+	//cv::imshow("imgDege", imgEdge);
+
+	return imgBinary;
+}
+
+cv::RotatedRect maxContour(cv::Mat img)
+{
+	RotatedRect res;
+	vector<vector<Point>> contours;
+	vector<Vec4i> hierarchy;
+	findContours(img, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+	//std::cout << "contours.size():" << contours.size() << endl;
+
+	if (!contours.size())
+		return res;
+
+	//保留最大的轮廓，即为证件位置
+	int maxSize = 0;
+	int idx = 0;
+	for (int i = 0; i < contours.size(); i++)
+	{
+		res = minAreaRect(contours[i]);
+		float area = res.boundingRect().area();
+		if (maxSize < area)
+		{
+			maxSize = area;
+			idx = i;
+		}
+	}
+	if (maxSize < 200)
+	{
+		res.center.x = -1;
+		res.center.y = -1;
+		return res;
+	}
+	return res;
+}
+
+cv::Rect rectAdjust(cv::RotatedRect rect, cv::Mat img)
+{
+	cv::Rect rectTmp;
+	int rect_x = rect.boundingRect().x;
+	int rect_y = rect.boundingRect().y;
+	int rect_w = rect.boundingRect().width;
+	int rect_h = rect.boundingRect().height;
+
+	if (rect_x < 0)
+		rectTmp.x = 0;
+	else
+		rectTmp.x = rect_x;
+	if (rect_y < 0)
+		rectTmp.y = 0;
+	else
+		rectTmp.y = rect_y;
+
+	if (rectTmp.x + rect_w >= img.cols)
+		rectTmp.width = img.cols - rect_x - 1;
+	else
+		rectTmp.width = rect_w;
+
+	if (rectTmp.y + rect_h >= img.rows)
+		rectTmp.height = img.rows - rect_y - 1;
+	else
+		rectTmp.height = rect_h;
+
+	return rectTmp;
+}
+
+bool isPassPort(cv::Mat srcImg)
+{	//判断是否为护照
+
+	//cv::imshow("srcImg", srcImg);
+
+	cv::Mat imgGary, imgMedianBlur, imgBinary;
+	cv::cvtColor(srcImg, imgGary, CV_BGR2GRAY);
+	//cv::imshow("gary_1", imgGary);
+	medianBlur(imgGary, imgMedianBlur, 5);
+	//cv::imshow("imgMedianBlur_1", imgMedianBlur);
+	threshold(imgMedianBlur, imgBinary, 100, 255, THRESH_OTSU);
+	//cv::imshow("imgBinary_1", imgBinary);
+	//cv::waitKey(0);
+
+	int count = 0;
+	for (int i = 0; i < imgBinary.rows; i++)
+	{
+		const uchar* inData = imgBinary.ptr<uchar>(i);
+		for (int j = 0; j < imgBinary.cols; j++)
+		{
+			if (int(inData[j]) == 0)
+			{
+				count++;
+			}
+		}
+	}
+	float rate = float(count) / (imgBinary.rows * imgBinary.cols);
+	//std::cout << "count: " << count << "  total:" << imgBinary.rows * imgBinary.cols << "  rate:" << rate << std::endl;
+	if (rate < 0.62)
+		return true;
+	return false;
+}
+
+cv::Mat procPassPort(cv::Mat srcImg)
+{//对护照预处理
+	return srcImg;
+}
+
+PassImageProc::PassImageProc()
+{
+
+}
+
+PassImageProc::PassImageProc(cv::Mat srcImg)
+	:mSrcImg(srcImg)
+{
+}
+
+PassImageProc::~PassImageProc()
+{
+}
+
+Mat PassImageProc::getROIImage()
+{
+	Mat roi = mSrcImg(Rect(4, mSrcImg.rows - 120, mSrcImg.cols - 8, 120));
+	return roi;
+}
+
+cv::Mat PassImageProc::findCardRegion(Mat srcImg, int flag, float scale)
+{
+	Mat imgTrans0 = Mat::zeros(srcImg.rows, srcImg.cols, srcImg.type());;
+
+	Mat srcImgCopy;
+	srcImg.copyTo(srcImgCopy);
+
+	int src_H = srcImg.rows;
+	int src_W = srcImg.cols;
+
+	int scale_H = int(src_H*scale);
+	int scale_W = int(src_W*scale);
+
+	//cv::flip(srcImg, srcImg, 1);
+
+	Mat srcImgScale;
+	//cv::resize(srcImg, srcImgScale, Size(scale_W, scale_H));
+	if (flag == 1)
+		cv::resize(srcImg, srcImgScale, Size(1600, 1200));
+	else
+		srcImg.copyTo(srcImgScale);
+
+	//1.分离通道
+	vector<Mat> imgSplit;
+	split(srcImgScale, imgSplit);
+
+	//2.滤波
+	Mat imgMedianBlur;
+	medianBlur(imgSplit[0], imgMedianBlur, 5);
+
+	//3.二值化
+	Mat imgBinary;
+	threshold(imgMedianBlur, imgBinary, 120, 255, THRESH_OTSU);
+	//cv::imshow("imgBinary", imgBinary);
+
+	//4.边缘提取
+	Mat imgEdge;
+	Canny(imgBinary, imgEdge, 5, 120);
+	//cv::imshow("imgDege", imgEdge);
 
 	//轮廓提取
 	vector<vector<Point>> contours;
 	vector<Vec4i> hierarchy;
 	findContours(imgEdge, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE, Point(0, 0));
 
-	std::cout << "contours.size():" << contours.size() << endl;
+	//std::cout << "contours.size():" << contours.size() << endl;
 
 	if (!contours.size())
 		return imgTrans0;
 
-	//保留最大的轮廓，即为证件位置
+	//寻找最大的轮廓
 	int maxSize = 0;
 	int idx = 0;
 	for (int i = 0; i < contours.size(); i++)
@@ -139,109 +282,125 @@ cv::Mat PassImageProc::findCardRegion(Mat srcImg, float scale)
 	if (maxSize < 200)
 		return imgTrans0;
 
-	std::cout << "contours[idx].size(): " << contours[idx].size() << std::endl;
+	//std::cout << "contours[idx].size(): " << contours[idx].size() << std::endl;
 	RotatedRect rect = minAreaRect(contours[idx]);
 
 	//遍历轮廓，求出所有支撑角度
-	vector<Point> sharpContours = findSharpCorners(contours[idx]);
-	for (int i = 0; i < sharpContours.size(); i++)
-	{
-		//circle(srcImgScale, sharpContours[i], 10, Scalar(255, (40*i)%255, 255), 4);
-	}
+	//vector<Point> sharpContours = findSharpCorners(contours[idx]);
+	//for (int i = 0; i < sharpContours.size(); i++)
+	//{
+	//	//circle(srcImgScale, sharpContours[i], 10, Scalar(255, (40*i)%255, 255), 4);
+	//}
 	
 	////角点检测
 	int rect_x = rect.boundingRect().x;
 	int rect_y = rect.boundingRect().y;
 	int rect_w = rect.boundingRect().width;
 	int rect_h = rect.boundingRect().height;
+	//std::cout << "rect_x: " << rect_x << " rect_y: " << rect_y << " rect_w: " << rect_w << " rect_h: " << rect_h << std::endl;
 	cv::Rect rectTmp;
 
-	if (rect_x < 0)
-		rectTmp.x = 0;
-	else
-		rectTmp.x = rect_x;
-	if (rect_y < 0)
-		rectTmp.y = 0;
-	else
-		rectTmp.y = rect_y;
-
-	if (rectTmp.x + rect_w >= srcImgScale.cols)
-		rectTmp.width = srcImgScale.cols - rect_x - 1;
-	else
-		rectTmp.width = rect_w;
-
-	if (rectTmp.y + rect_h >= srcImgScale.rows)
-		rectTmp.height = srcImgScale.rows - rect_y - 1;
-	else
-		rectTmp.height = rect_h;
+	rectTmp.x = max(rect_x, 0);
+	rectTmp.y = max(rect_y, 0);
+	rectTmp.width = min(srcImgScale.cols - rectTmp.x, rect_w);
+	rectTmp.height = min(srcImgScale.rows - rectTmp.y, rect_h);
+	//std::cout << "original rectTmp: " << rectTmp.x << " " << rectTmp.y << " " << rectTmp.width << " " << rectTmp.height << std::endl;
 
 	/////角点检测
-	cv::Mat imgCorner;
-	imgBinary(rectTmp).copyTo(imgCorner);
-	cv::imshow("imgCorner", imgCorner);
-
-	std::vector<cv::Point2f> cornersGoodFeatures;
-	cv::goodFeaturesToTrack(imgCorner, cornersGoodFeatures, 200, 0.05, 10, Mat(), 5);
-
-	std::cout << "Number of corners detected: " << cornersGoodFeatures.size() << std::endl;
-	int cornersGoodFeaturesSize = cornersGoodFeatures.size();
-	for (int i = 0; i < cornersGoodFeatures.size(); i++)
-	{
-		//circle(srcImgScale, cv::Point(cornersGoodFeatures[i].x + rect_x, cornersGoodFeatures[i].y + rect_y), 4, Scalar(0, 0, 255), -1, 8, 0);
-	}
-	sort(cornersGoodFeatures.begin(), cornersGoodFeatures.end(), setSortRule_X);
-	cv::Point pt_right = cornersGoodFeatures[0];
-	cv::Point pt_left = cornersGoodFeatures[cornersGoodFeaturesSize - 1];
-	sort(cornersGoodFeatures.begin(), cornersGoodFeatures.end(), setSortRule_Y);
-	cv::Point pt_top = cornersGoodFeatures[0];
-	cv::Point pt_bot = cornersGoodFeatures[cornersGoodFeaturesSize - 1];
-
+	//cv::Mat imgCorner;
+	//imgBinary(rectTmp).copyTo(imgCorner);
+	//cv::imshow("imgCorner", imgCorner);
+	//std::vector<cv::Point2f> cornersGoodFeatures;
+	//cv::goodFeaturesToTrack(imgCorner, cornersGoodFeatures, 200, 0.05, 10, Mat(), 5);
+	//std::cout << "Number of corners detected: " << cornersGoodFeatures.size() << std::endl;
+	//int cornersGoodFeaturesSize = cornersGoodFeatures.size();
+	//for (int i = 0; i < cornersGoodFeatures.size(); i++)
+	//{
+	//	//circle(srcImgScale, cv::Point(cornersGoodFeatures[i].x + rect_x, cornersGoodFeatures[i].y + rect_y), 4, Scalar(0, 0, 255), -1, 8, 0);
+	//}
+	//sort(cornersGoodFeatures.begin(), cornersGoodFeatures.end(), setSortRule_X);
+	//cv::Point pt_right = cornersGoodFeatures[0];
+	//cv::Point pt_left = cornersGoodFeatures[cornersGoodFeaturesSize - 1];
+	//sort(cornersGoodFeatures.begin(), cornersGoodFeatures.end(), setSortRule_Y);
+	//cv::Point pt_top = cornersGoodFeatures[0];
+	//cv::Point pt_bot = cornersGoodFeatures[cornersGoodFeaturesSize - 1];
 	//circle(srcImgScale, cv::Point(pt_right.x + rect_x, pt_right.y + rect_y), 8, Scalar(0, 0, 255), -1, 8, 0);
 	//circle(srcImgScale, cv::Point(pt_left.x + rect_x, pt_left.y + rect_y), 8, Scalar(0, 0, 255), -1, 8, 0);
 	//circle(srcImgScale, cv::Point(pt_top.x + rect_x, pt_top.y + rect_y), 8, Scalar(0, 0, 255), -1, 8, 0);
 	//circle(srcImgScale, cv::Point(pt_bot.x + rect_x, pt_bot.y + rect_y), 8, Scalar(0, 0, 255), -1, 8, 0);
 	//////////////// 角点检测 end
 
-
 	//cv::drawContours(srcImgScale, contours, idx, (255, 0, 255), 1);
-	//cv::rectangle(srcImgScale, rect.boundingRect(), (255, 0, 255), 1);
+	//if(flag ==2)
+		//cv::rectangle(srcImgScale, rect.boundingRect(), (0, 0, 255), 2);
 
-	cv::imshow("contours", srcImgScale);
+	//cv::imshow("contours", srcImgScale);
 	//cv::waitKey(0);
 	
-	std::cout << "rect.angle:  " << rect.angle
-			 << " rect.center: " << rect.center
-			 << " rect.size(): " << rect.size << std::endl;		
+	//std::cout << "rect.angle:  " << rect.angle << " rect.center: " << rect.center << " rect.size(): " << rect.size << std::endl;
 
 	float angle = rect.angle;
+	
+	//如果是第二次进行检测，并且框的高度大于宽度则进行旋转角度变换,裁剪形状也对换
+	if (flag == 2 && rect_w <= rect_h)
+	{
+		angle = rect.angle + 90;
+		//计算变换中心
+		int centerTmpX = rectTmp.x + rectTmp.width / 2;
+		int centerTmpY = rectTmp.y + rectTmp.height / 2;
 
-	//if (rect.angle < 0)
-	//	angle = rect.angle + 90;
+		rectTmp.x = max(centerTmpX - rectTmp.height / 2, 0);
+		rectTmp.y = max(centerTmpY - rectTmp.width / 2, 0);
+
+		int tempW = rectTmp.width;
+		int tempH = rectTmp.height;
+
+		rectTmp.width = min(tempH, srcImgScale.cols - rectTmp.x);
+		rectTmp.height = min(tempW, srcImgScale.rows - rectTmp.y);
+
+		//std::cout << "after change center rectTmp: " << rectTmp.x << " " << rectTmp.y << " " << rectTmp.width << " " << rectTmp.height << std::endl;
+	}
 
 	cv::Point2f center;
 	center.x = rect.center.x / 0.5;
 	center.y = rect.center.y / 0.5;
 
-	cv::Mat rot_mat = cv::getRotationMatrix2D(rect.center, rect.angle, 1.0);
+	cv::Mat rot_mat = cv::getRotationMatrix2D(rect.center, angle, 1.0);
 	cv::warpAffine(srcImgScale, srcImgScale, rot_mat, srcImgScale.size());
 
 	//cv::rectangle(srcImgScale, rectTmp, cv::Scalar(255, 0, 255),2);
 
-	cv::imshow("srcImg affter warpAffine ", srcImgScale);
-	cv::waitKey(0);
+	//cv::imshow("srcImg affter warpAffine ", srcImgScale);
+	//cv::waitKey(0);
 	
-	int cropLength = max(rectTmp.width, rectTmp.height) + 1;
-	int cropCenterX = rectTmp.x + rectTmp.width / 2 - 1;
-	int cropCenterY = rectTmp.y + rectTmp.height / 2 - 1;
-	int lt_x = max(cropCenterX - cropLength / 2 + 1, 0);
-	int lt_y = max(cropCenterY - cropLength / 2 + 1, 0);
+	int cropLength, min_W_H, cropCenterX, cropCenterY, lt_x, lt_y, end_x, end_y;
+	if (flag == 1)
+	{////保证变换之后的截取在图像范围之内
+		//确定中心
+		cropCenterX = rectTmp.x + rectTmp.width / 2 - 1;
+		cropCenterY = rectTmp.y + rectTmp.height / 2 - 1;
+		//确定宽度
+		cropLength = max(rectTmp.width, rectTmp.height);
+		//确定左上角
+		lt_x = max(cropCenterX - cropLength / 2 + 1, 0);
+		lt_y = max(cropCenterY - cropLength / 2 + 1, 0);
+		//确定下边界和右边界
+		end_x = min(lt_x + cropLength, srcImgScale.cols) - 1;
+		end_y = min(lt_y + cropLength, srcImgScale.rows) - 1;
 
-	std::cout << "cropCenterX: " << lt_x << " " << lt_y << " " << cropLength << std::endl;
-	std::cout << "srcImgScale: " << srcImgScale.cols << " " << srcImgScale.rows << std::endl;
+		//std::cout << "cropCenterX: " << lt_x << " " << lt_y << " " << end_x << " " << end_y << std::endl;
+		//std::cout << "srcImgScale: " << srcImgScale.cols << " " << srcImgScale.rows << std::endl;
 
-	//cv::rectangle(srcImgScale, cv::Rect(lt_x, lt_y, cropLength, cropLength), cv::Scalar(255, 255, 0));
+		//cv::rectangle(srcImgScale, cv::Rect(lt_x, lt_y, cropLength, cropLength), cv::Scalar(255, 255, 0));
 
-	srcImgScale(cv::Rect(lt_x, lt_y, cropLength, cropLength)).copyTo(imgTrans0);
+		srcImgScale(cv::Rect(cv::Point(lt_x, lt_y), cv::Point(end_x, end_y))).copyTo(imgTrans0);
+	}
+	else
+	{
+		//std::cout << "before crop rectTmp: " << rectTmp.x << " " << rectTmp.y << " " << rectTmp.width << " " << rectTmp.height << std::endl;
+		//std::cout << "srcImgScale: " << srcImgScale.cols << " " << srcImgScale.rows << std::endl;
+		srcImgScale(rectTmp).copyTo(imgTrans0);
+	}
 	
 	return imgTrans0;
 
@@ -329,75 +488,88 @@ cv::Mat PassImageProc::findCardRegion(Mat srcImg, float scale)
 
 void PassImageProc::imgProc(Mat &srcImg, const Size &closeSize, const Size &erSize, const double binaryMinVal)
 {
-	//找到证件位置并旋转，此时证件有两种情况，正、倒，都是非镜像的
+	//缩放因子
 	float scale = 0.5;
+
+	//旋转，此时证件有两种情况，正、倒，都是非镜像的
 	cv::flip(srcImg, srcImg, 1);
+	
+	//判断是否为护照
+	int passPortOrNot = isPassPort(srcImg);
 
-	Mat imgTrans;
-	imgTrans = findCardRegion(srcImg, scale);
+	cv::Mat imgFound;
 
-	if (imgTrans.cols == 0 || imgTrans.rows == 0)
-		return;
+	if (passPortOrNot == true)
+	{
+		//处理护照
+		imgFound = procPassPort(srcImg);
+	}
+	else //处理非护照
+	{
+		//第一次寻找证件位置，旋转为水平或竖直
+		int flag = 1;
+		imgFound = findCardRegion(srcImg, flag, scale);
 
-	cv::imshow("imgTrans0", imgTrans);
-	cv::waitKey(0);
+		if (imgFound.cols == 0 || imgFound.rows == 0)
+			return;
 
-	imgTrans = findCardRegion(imgTrans, scale);
+		//cv::imshow("imgFound first", imgFound);
+		//cv::waitKey(0);
 
-	if (imgTrans.cols == 0 || imgTrans.rows == 0)
-		return;
+		flag += 1;
+		//第一次寻找证件位置，旋转为水平
+		imgFound = findCardRegion(imgFound, flag, scale);
 
-	cv::imshow("imgTrans1", imgTrans);
-	cv::waitKey(0);
+		if (imgFound.cols == 0 || imgFound.rows == 0)
+			return;
 
-	//cv::imwrite("D:\\code\\OCR\\photos\\GA2\\90_1_"+string("crop2.jpg"), imgTrans);
+		//cv::imshow("imgFound second", imgFound);
+		//cv::waitKey(0);
+	}
 
-	//cv::imshow("imgTrans", imgTrans);
-	//cv::waitKey(0);
-
-	Mat imgGary;
-	cvtColor(imgTrans, imgGary, CV_RGB2GRAY);
+	cv::Mat imgGary;
+	cv::cvtColor(imgFound, imgGary, CV_RGB2GRAY);
 
 	//光照补偿
 	unevenLightCompensate(imgGary, 16);
 	//cv::imshow("unevenLightCompensate", imgGary);
 
 	//Sobel算子，x方向求梯度
-	Mat sobel; //,sobel_x,sobel_y;
-	Sobel(imgGary, sobel, CV_8U, 1, 0, 3);
+	cv::Mat sobel; //,sobel_x,sobel_y;
+	cv::Sobel(imgGary, sobel, CV_8U, 1, 0, 3);
 	//cv::imshow("sobel", sobel);
 
 	convertScaleAbs(sobel, sobel);
 	//cv::imshow("convertScaleAbs", sobel);
 
 	//二值化
-	Mat binary;
-	threshold(sobel, binary, binaryMinVal, 255, THRESH_OTSU + THRESH_BINARY);
+	cv::Mat binary;
+	cv::threshold(sobel, binary, binaryMinVal, 255, THRESH_OTSU + THRESH_BINARY);
 	//cv::imshow("binary", binary);
 	//Mat dest;
 	//blur(binary, dest, Size(3, 3));
 
 	//膨胀和腐蚀核
-	Mat element1 = getStructuringElement(MORPH_RECT, closeSize);
-	Mat element2 = getStructuringElement(MORPH_RECT, erSize);
+	cv::Mat element1 = getStructuringElement(MORPH_RECT, closeSize);
+	cv::Mat element2 = getStructuringElement(MORPH_RECT, erSize);
 	//Mat element3 = getStructuringElement(MORPH_RECT, Size(5, 3));
 
 	//膨胀
-	Mat dilate1;
-	dilate(binary, dilate1, element1);
+	cv::Mat dilate1;
+	cv::dilate(binary, dilate1, element1);
 
 	//腐蚀
-	Mat erode1;
-	erode(dilate1, erode1, element2);
+	cv::Mat erode1;
+	cv::erode(dilate1, erode1, element2);
 
 	//cv::imshow("erode1", erode1);
 	//cv::waitKey(0);
 
-	Mat res = erode1;
-	vector<cv::RotatedRect> rects = findTextRegion(res, imgTrans);
-	cout << "rect.size(): " << rects.size() << endl;
+	cv::Mat res = erode1;
+	vector<cv::RotatedRect> rects = findTextRegion(res, imgFound);
+	//cout << "rect.size(): " << rects.size() << endl;
 	for (auto rect : rects) {
-		Point2f P[4];
+		cv::Point2f P[4];
 		rect.points(P);
 
 		//line(imgTrans, Point((int)P[0].x, (int)P[0].y), Point((int)P[1].x, (int)P[1].y), Scalar(0, 255, 0));
@@ -420,18 +592,18 @@ void PassImageProc::imgProc(Mat &srcImg, const Size &closeSize, const Size &erSi
 		//cv::imshow("mask", mask);
 		//cv::waitKey(0);
 
-		Mat imgROI;
+		cv::Mat imgROI;
 		imgGary(dwRect).copyTo(imgROI);
 
 		//cv::imshow("imgROI", imgROI);
 		//cv::waitKey(0);
 
 		//Mat reImg = normalizedMatByRoi(imgROI, rect);
-		Mat reImg = imgROI;
-		threshold(reImg, reImg, 100, 255, THRESH_OTSU);
+		cv::Mat reImg = imgROI;
+		cv::threshold(reImg, reImg, 100, 255, THRESH_OTSU);
 		//cvtColor(reImg, reImg, CV_BGR2GRAY);
-		//equalizeHist(reImg, reImg);
-		//reImg = remove_noise_and_smooth(reImg);
+		equalizeHist(reImg, reImg);
+		reImg = remove_noise_and_smooth(reImg);
 		//cv::imshow("reImg", reImg);
 		//cv::waitKey(0);
 		mProcImgs.push_back(reImg);
@@ -442,7 +614,7 @@ void PassImageProc::imgProc(Mat &srcImg, const Size &closeSize, const Size &erSi
 		cv::flip(reImg, reImg, 0);
 
 		mProcImgs.push_back(reImg);
-		//imwrite("I:\\xx.tif", reImg);
+		//cv::imwrite("I:\\xx.tif", reImg);
 	}
 	//cv::imshow("srcImg", srcImg);
 	//cv::waitKey(0);
@@ -796,7 +968,7 @@ vector<RotatedRect> PassImageProc::findTextRegion(Mat img, Mat srcImg)
 	findContours(img, contours, hierarchy, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 	//drawContours(mSrcImg, contours, -1, Scalar(0, 0, 255));
 
-	std::cout << "contours.size(): " << contours.size() << std::endl;
+	//std::cout << "contours.size(): " << contours.size() << std::endl;
 	//2.筛选护照
 	for (int i = 0; i < contours.size(); i++)
 	{
@@ -807,7 +979,7 @@ vector<RotatedRect> PassImageProc::findTextRegion(Mat img, Mat srcImg)
 		int m_width = rect.boundingRect().width;
 		int m_height = rect.boundingRect().height;
 		//筛选那些太细的矩形，留下扁的
-		if (m_height > m_width*0.7 || m_width<500)
+		if (m_height > m_width*0.2 || m_width<img.cols * 0.7)
 			continue;
 		//if (!verifySize(rect))
 		//	continue;
@@ -819,7 +991,7 @@ vector<RotatedRect> PassImageProc::findTextRegion(Mat img, Mat srcImg)
 		if (area < 15000)
 		continue;*/
 
-		//drawContours(srcImg, contours, i, Scalar(0, 255, 0));
+		drawContours(srcImg, contours, i, Scalar(0, 255, 0));
 		rectangle(srcImg, rect.boundingRect(), Scalar(0, 0, 255), 2);
 
 		//轮廓近似，作用较小，approxPolyDP函数有待研究
@@ -831,7 +1003,7 @@ vector<RotatedRect> PassImageProc::findTextRegion(Mat img, Mat srcImg)
 		rects.push_back(rect);
 	}
 
-	//cv::imshow("contours", srcImg);
+	cv::imshow("contours", srcImg);
 	//cv::waitKey(0);
 
 	return rects;

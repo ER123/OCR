@@ -41,6 +41,6 @@ private:
 	//bool setSortRule(const cv::Point2f& , const cv::Point2f& );
 	bool isEligible(const cv::RotatedRect &);
 	cv::Mat image_rotate_newsize(cv::Mat&, const CvPoint &, double, double);
-	cv::Mat findCardRegion(cv::Mat, float scale = 0.5);
+	cv::Mat findCardRegion(cv::Mat, int ,float scale = 0.5);
 };
 

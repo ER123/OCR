@@ -9,8 +9,8 @@
 using namespace cv;
 using namespace std;
 
-//#define CAM
-#define PIC
+#define CAM
+//#define PIC
 
 bool bInit = true;
 bool bStopRecognize = false;
@@ -183,9 +183,14 @@ int main()
 
 	PassImageProc preProc;
 	cv::Mat image;
+	std::vector<cv::Mat> procImgs;
+
+	clock_t total_start, total_end;
+	clock_t detect_start, detect_end;
 
 #ifdef CAM
 	VideoCapture cap(0);
+
 	cap.set(CV_CAP_PROP_FRAME_WIDTH, 1600);
 	cap.set(CV_CAP_PROP_FRAME_HEIGHT, 1200);
 
@@ -194,10 +199,16 @@ int main()
 		system("pause");
 		return -1;
 	}
-
 	while (true) {
+		total_start = clock();
 
-		cap >> image;
+		clock_t readImg_start, readImg_end;
+		readImg_start = clock();
+
+		cap.read(image);
+
+		readImg_end = clock();
+		std::cout << "Read image time: " << readImg_end - readImg_start << "ms" << std::endl;
 
 		if (image.empty())
 		{
@@ -205,18 +216,25 @@ int main()
 			continue;
 		}
 
-		imshow("frame", image);
-
 		//Mat *pDstImg = new Mat(frame.rows, frame.cols, frame.type());
 		//frame.copyTo(*pDstImg);
 		//Mat srcFrame = *((Mat *)pDstImg);
 
+		detect_start = clock();
+
 		preProc.imgProc(image, Size(28, 8));
-		std::vector<cv::Mat> procImgs = preProc.getResultImageArray();
+		procImgs = preProc.getResultImageArray();
+
+		detect_end = clock();
+		std::cout << "   Detect time: " << detect_end - detect_start << "ms" << std::endl;
 				
+		imshow("frame", image);
 		char c = waitKey(1);
 		if (c == 27)
 			break;
+
+		total_end = clock();
+		std::cout << "    Total time: " << total_end - total_start << "ms" << std::endl;
 	}
 	cap.release();	
 	destroyAllWindows();
@@ -224,6 +242,8 @@ int main()
 	
 #ifdef PIC
 	string imageList = "pics_new.txt";
+	//string imageList = "pics_pp.txt";
+	//string imageList = "pics.txt";
 	std::ifstream finImage(imageList, std::ios::in);
 	string line;
 
@@ -232,6 +252,7 @@ int main()
 		std::cout << line << std::endl;
 		image = imread(line);
 		preProc.imgProc(image, Size(28, 8));
+		procImgs = preProc.getResultImageArray();
 		char c = waitKey(0) & 0xFF;
 		if (c == 'q')
 			break;
